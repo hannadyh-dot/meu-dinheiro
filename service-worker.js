@@ -1,4 +1,4 @@
-const CACHE = 'meu-dinheiro-shell-v2';
+const CACHE = 'meu-dinheiro-shell-v3';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-180.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(CORE)));

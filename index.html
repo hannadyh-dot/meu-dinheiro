@@ -46,7 +46,7 @@ button,input,select{font:inherit}button{cursor:pointer;border:0}.wrap{max-width:
  <div class="section"><h2>Limites por categoria</h2></div><div class="card" id="budgetList"></div>
 </section>
 <section id="annual" class="page"><div class="section"><h2>Visão do ano</h2><select id="yearPicker" class="field" style="width:auto"></select></div><div id="annualList"></div></section>
-<section id="backup" class="page"><div class="card"><h2>Backup dos seus dados</h2><p class="muted">Exporte uma cópia dos seus dados. O arquivo ficará sob seu controle.</p><button class="primary" style="width:100%" onclick="backup()">Exportar backup</button><p class="muted" id="backupStatus"></p></div><div class="card"><h3>Restaurar dados</h3><p class="muted">Você pode restaurar um backup exportado ou importar um backup antigo do aplicativo. A restauração substitui os dados atuais.</p><input id="restoreFile" class="field" type="file" accept=".json,application/json"><button class="secondary" style="width:100%;margin-top:10px" onclick="restore()">Selecionar e restaurar backup</button></div><div class="muted">O backup é criptografado. Guarde também seu PIN: sem ele, não será possível restaurar os dados.</div></section>
+<section id="backup" class="page"><div class="card"><h2>Backup dos seus dados</h2><p class="muted">Guarde uma cópia dos seus lançamentos em um local privado. O JSON permite restaurar o aplicativo; o Excel serve para consultar e analisar.</p><button class="primary" style="width:100%" onclick="backup()">Exportar backup JSON</button><button class="secondary" style="width:100%;margin-top:10px" onclick="exportExcel()">Exportar Excel (.xlsx)</button><p class="muted" id="backupStatus"></p></div><div class="card"><h3>Importar sua planilha atual</h3><p class="muted">Selecione o arquivo Controle de gastos.xlsx. A importação lê a aba “Lançamentos” e substitui os dados atuais deste aparelho.</p><input id="sheetFile" class="field" type="file" accept=".xlsx,.xls"><button class="secondary" style="width:100%;margin-top:10px" onclick="importSpreadsheet()">Importar planilha Excel</button><p class="muted" id="importStatus"></p></div><div class="card"><h3>Restaurar backup JSON</h3><p class="muted">A restauração substitui os dados atuais. Use um backup exportado pelo Meu Dinheiro.</p><input id="restoreFile" class="field" type="file" accept=".json,application/json"><button class="secondary" style="width:100%;margin-top:10px" onclick="restore()">Selecionar e restaurar backup</button></div><p class="muted">Os dados ficam armazenados neste navegador e não são enviados ao GitHub. O armazenamento local não é criptografado: proteja o aparelho e mantenha seus backups em local privado.</p></section>
 </div>
 <button class="fab" onclick="openEntry()" aria-label="Adicionar lançamento">＋</button>
 <nav class="bottom"><button class="active" data-go="dashboard"><span>⌂</span>Início</button><button data-go="transactions"><span>↕</span>Lançamentos</button><button data-go="planning"><span>◎</span>Planejar</button><button data-go="annual"><span>▦</span>Ano</button><button data-go="backup"><span>⇧</span>Backup</button></nav>
@@ -62,6 +62,7 @@ button,input,select{font:inherit}button{cursor:pointer;border:0}.wrap{max-width:
  <button class="primary" id="saveButton" style="width:100%;margin-top:8px" onclick="saveEntry()">Salvar lançamento</button>
 </div></div><div class="toast" id="toast"></div>
 </div><!-- appRoot -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 const KEY='meuDinheiroLocal_v3';
 const LEGACY_KEY='meuDinheiroLocal_v2';
@@ -121,6 +122,42 @@ async function restore(){
  state=d;save();render();toast('Backup restaurado neste aparelho');
  }catch(e){alert('Arquivo de backup inválido ou incompatível.');}
 }
+
+function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}
+function exportExcel(){
+ if(!window.XLSX){alert('A biblioteca de Excel ainda não carregou. Conecte-se à internet e tente novamente.');return}
+ const data=state.transactions.map(t=>({Data:t.date||'',Movimento:t.movement||'',Categoria:t.category||'',Descrição:t.description||'',Valor:Number(t.amount)||0,Origem:t.source||'', 'Mês de referência':t.refMonth||'',Observações:t.notes||'', 'Qtd. parcelas':t.installments||'', '1ª cobrança':t.firstCharge||'', 'Parcela atual':t.currentInstallment||''}));
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'Lançamentos');
+ const cfg=[{Configuração:'Moeda',Valor:'BRL'},{Configuração:'Meta de guardar',Valor:state.settings.saveRate||0}];
+ XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(cfg),'Configurações');
+ XLSX.writeFile(wb,'meu-dinheiro-'+today()+'.xlsx');toast('Excel exportado');
+}
+async function importSpreadsheet(){
+ const f=$('sheetFile').files[0];if(!f){toast('Selecione sua planilha primeiro');return}
+ if(!window.XLSX){alert('Para importar Excel, conecte-se à internet e tente novamente.');return}
+ try{
+  const ab=await f.arrayBuffer(),wb=XLSX.read(ab,{type:'array',cellDates:true});
+  const sn=wb.SheetNames.find(n=>n.toLowerCase().trim()==='lançamentos')||wb.SheetNames.find(n=>n.toLowerCase().includes('lanç'));
+  if(!sn)throw new Error('Não encontrei a aba Lançamentos.');
+  const raw=XLSX.utils.sheet_to_json(wb.Sheets[sn],{defval:null,raw:false});
+  const dateISO=v=>{if(!v)return ''; if(v instanceof Date)return v.toISOString().slice(0,10); if(typeof v==='number'){let d=XLSX.SSF.parse_date_code(v);return d?`${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`:''} let z=String(v).trim();if(/^\d{4}-\d{2}-\d{2}/.test(z))return z.slice(0,10);let m=z.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);return m?`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`:''};
+  const tx=raw.filter(r=>r.Data&&r.Movimento&&r.Descrição&&r['Valor (R$)']!==null).map((r,i)=>{
+   let date=dateISO(r.Data),ref=dateISO(r['Mês de referência'])||date.slice(0,7);
+   if(ref.length>7)ref=ref.slice(0,7); else if(/^\d{4}-\d{2}$/.test(ref)){} else ref=date.slice(0,7);
+   let first=dateISO(r['1ª cobrança']); if(first.length>7)first=first.slice(0,7);
+   let movement=String(r.Movimento).trim();
+   let amount=Number(String(r['Valor (R$)']).replace(/\./g,'').replace(',','.'));
+   if(!date||!movement||!Number.isFinite(amount))return null;
+   return {id:Date.now()+i,movement,category:String(r.Categoria||'A identificar'),description:String(r.Descrição),amount:Math.abs(amount),source:String(r.Origem||'Nubank'),date,refMonth:ref,notes:String(r.Observações||''),installments:Number(r['Qtd. parcelas'])||undefined,firstCharge:first||undefined,currentInstallment:Number(r['Parcela atual'])||undefined};
+  }).filter(Boolean);
+  if(!tx.length)throw new Error('A aba foi encontrada, mas não há lançamentos válidos.');
+  if(!confirm(`Encontrei ${tx.length} lançamentos. A importação substituirá os dados atuais deste aparelho. Deseja continuar?`))return;
+  state.transactions=tx;state.settings={...state.settings,saveRate:0.3};
+  save();render();$('importStatus').textContent=`Importação concluída: ${tx.length} lançamentos.`;
+  toast('Planilha importada com sucesso');
+ }catch(e){alert('Não foi possível importar a planilha: '+(e.message||'arquivo inválido'))}
+}
+
 function loadLocal(){
  let d=null;
  try{d=JSON.parse(localStorage.getItem(KEY)||'null')}catch(e){}
